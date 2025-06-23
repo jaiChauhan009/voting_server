@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/auth'); // Import authentication middleware
 const { Candidate, Voter } = require('../models'); // Import Candidate and Voter models
+const redisClient = require('../config/redis');
 
 // @route   POST /api/candidate/register
 // @desc    Register an authenticated voter as a candidate
@@ -88,33 +89,49 @@ router.post('/register', protect, async (req, res) => {
 // @access  Public (or Private, depending on app requirements)
 router.get('/:candidate_id', async (req, res) => {
   try {
-    // Populate voter_id to get voter details (username, email, pincode, image)
+    const cacheKey = `candidate:${req.params.candidate_id}`;
+
+    // Try to get data from Redis cache
+    const cachedCandidate = await redisClient.get(cacheKey);
+    if (cachedCandidate) {
+      console.log('Serving candidate from Redis cache');
+      return res.json({
+        message: 'Candidate fetched successfully from cache',
+        candidate: JSON.parse(cachedCandidate)
+      });
+    }
+
+    // If not in cache, fetch from MongoDB
     const candidate = await Candidate.findOne({ candidate_id: req.params.candidate_id }).populate('voter_id', '-password');
 
     if (!candidate) {
       return res.status(404).json({ message: 'Candidate not found' });
     }
 
+    const responseCandidate = {
+      _id: candidate._id,
+      candidate_id: candidate.candidate_id,
+      voter_sign: candidate.voter_sign,
+      year: candidate.year,
+      level: candidate.level,
+      vote_count: candidate.vote_count,
+      promises: candidate.promises,
+      voterDetails: candidate.voter_id ? {
+        _id: candidate.voter_id._id,
+        voter_id: candidate.voter_id.voter_id,
+        username: candidate.voter_id.username,
+        email: candidate.voter_id.email,
+        pincode: candidate.voter_id.pincode,
+      } : null
+    };
+
+    // Store in Redis cache with an expiry (e.g., 1 hour = 3600 seconds)
+    await redisClient.setEx(cacheKey, 3600, JSON.stringify(responseCandidate));
+    console.log('Serving candidate from MongoDB and caching to Redis');
+
     res.json({
       message: 'Candidate fetched successfully',
-      candidate: {
-        _id: candidate._id,
-        candidate_id: candidate.candidate_id,
-        voter_sign: candidate.voter_sign,
-        year: candidate.year,
-        level: candidate.level,
-        vote_count: candidate.vote_count,
-        promises: candidate.promises,
-        // The populated voter details will be under candidate.voter_id
-        voterDetails: candidate.voter_id ? {
-          _id: candidate.voter_id._id,
-          voter_id: candidate.voter_id.voter_id, // Original string voter_id
-          username: candidate.voter_id.username,
-          email: candidate.voter_id.email,
-          pincode: candidate.voter_id.pincode,
-          // image: candidate.voter_id.image // Include if needed, but often not for general API
-        } : null
-      }
+      candidate: responseCandidate
     });
   } catch (error) {
     console.error('Error fetching candidate:', error.message);
