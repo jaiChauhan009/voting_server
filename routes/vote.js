@@ -1,4 +1,4 @@
-// routes/vote.js (modifications)
+
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/auth');
@@ -48,14 +48,11 @@ router.post('/', protect, async (req, res) => {
     const updatedCandidate = await Candidate.findByIdAndUpdate(
       candidate._id,
       { $inc: { vote_count: 1 } },
-      { new: true } // Return the updated document
+      { new: true } 
     );
 
-    // Get the `io` instance from the app context
     const io = req.app.get('socketio');
 
-    // Emit event to all connected clients in the specific room (level and pincode)
-    // Clients will join rooms based on the election they are viewing.
     io.to(`election-${level}-${pincode}`).emit('voteUpdate', {
       candidateId: updatedCandidate._id,
       candidate_id_string: updatedCandidate.candidate_id, // Use string ID for client
